@@ -121,13 +121,13 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 ;; ---------------------------------------------------------------------------
 
 (defun parse-primitive (parser json len tokens)
-  "Parses primitives: numbers, boolean (true/false), or null."
+  "Parses primitives with STRICT JSON number validation."
   (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
   (let ((start (parser-pos parser))
         (token (alloc-token parser tokens)))
     (declare (type fixnum start))
-    
-    ;; 1. Check for Keywords
+
+    ;; 1. Check Keywords first (same as before)
     (cond
       ((match-string-p json len (parser-pos parser) "true")
        (incf (parser-pos parser) 4))
@@ -135,17 +135,72 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
        (incf (parser-pos parser) 5))
       ((match-string-p json len (parser-pos parser) "null")
        (incf (parser-pos parser) 4))
+
+      ;; 2. Strict Number Parsing
       (t
-       ;; 2. Check for Numbers
-       (loop while (< (parser-pos parser) len)
-             for ch = (char json (parser-pos parser))
-             while (or (alphanumericp ch) (find ch "+- .eE"))
-             do (incf (parser-pos parser)))
-       
-       ;; 3. Validation
-       (when (= (parser-pos parser) start)
-         (error 'invalid-json))))
-    
+       ;; A. Optional Minus (Start)
+       (when (and (< (parser-pos parser) len)
+                  (char= (char json (parser-pos parser)) #\-))
+         (incf (parser-pos parser)))
+
+       ;; B. Integer Part
+       (if (>= (parser-pos parser) len) (error 'invalid-json)) ;; Empty after minus?
+       (let ((ch (char json (parser-pos parser))))
+         (cond
+           ;; Leading Zero (Allowed, but next char cannot be a digit)
+           ((char= ch #\0)
+            (incf (parser-pos parser))
+            ;; Strict check: 01 is invalid. 0.1 is valid. 0e1 is valid.
+            (when (and (< (parser-pos parser) len)
+                       (digit-char-p (char json (parser-pos parser))))
+              (error 'invalid-json)))
+
+           ;; Non-Zero Digit (1-9)
+           ((digit-char-p ch)
+            (loop while (and (< (parser-pos parser) len)
+                             (digit-char-p (char json (parser-pos parser))))
+                  do (incf (parser-pos parser))))
+
+           ;; Anything else at start (e.g. "+", ".", "e") -> Error
+           (t (error 'invalid-json))))
+
+       ;; C. Fraction Part (Optional)
+       (when (and (< (parser-pos parser) len)
+                  (char= (char json (parser-pos parser)) #\.))
+         (incf (parser-pos parser)) ;; Consume dot
+
+         ;; Must have at least one digit after dot
+         (when (or (>= (parser-pos parser) len)
+                   (not (digit-char-p (char json (parser-pos parser)))))
+           (error 'invalid-json))
+
+         ;; Consume remaining digits
+         (loop while (and (< (parser-pos parser) len)
+                          (digit-char-p (char json (parser-pos parser))))
+               do (incf (parser-pos parser))))
+
+       ;; D. Exponent Part (Optional)
+       (when (and (< (parser-pos parser) len)
+                  (or (char= (char json (parser-pos parser)) #\e)
+                      (char= (char json (parser-pos parser)) #\E)))
+         (incf (parser-pos parser)) ;; Consume E
+
+         ;; Optional Sign (+ or -) allowed ONLY here
+         (when (and (< (parser-pos parser) len)
+                    (or (char= (char json (parser-pos parser)) #\+)
+                        (char= (char json (parser-pos parser)) #\-)))
+           (incf (parser-pos parser)))
+
+         ;; Must have at least one digit after E (and optional sign)
+         (when (or (>= (parser-pos parser) len)
+                   (not (digit-char-p (char json (parser-pos parser)))))
+           (error 'invalid-json))
+
+         ;; Consume remaining digits
+         (loop while (and (< (parser-pos parser) len)
+                          (digit-char-p (char json (parser-pos parser))))
+               do (incf (parser-pos parser))))))
+
     (fill-token token :primitive start (parser-pos parser))))
 
 (defun parse-string (parser json len tokens)
@@ -206,34 +261,35 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
    Enforces strict comma separation between items."
   `(progn
      (ignore-whitespace ,parser ,json ,len)
-     
+
      ;; 1. Check for Empty Collection "[]" or "{}"
      (if (and (< (parser-pos ,parser) ,len)
               (char= (char ,json (parser-pos ,parser)) ,end-char))
          (incf (parser-pos ,parser)) ;; Consumed closing char
-         
+
          ;; 2. Non-Empty: Loop Items
          (loop
            ;; Run the body (parse-value or parse-item)
            ,@body
-           
+
            (ignore-whitespace ,parser ,json ,len)
-           
+
            ;; Safety check inside loop
            (when (>= (parser-pos ,parser) ,len)
              (error 'incomplete-json))
-             
+
            (let ((ch (char ,json (parser-pos ,parser))))
              (cond
                ;; Case A: Found Closing Char -> Done
                ((char= ch ,end-char)
                 (incf (parser-pos ,parser))
                 (return))
-               
+
                ;; Case B: Found Comma -> Continue to next item
                ((char= ch #\,)
-                (incf (parser-pos ,parser)))
-               
+                (incf (parser-pos ,parser))
+                (ignore-whitespace ,parser ,json, len))
+
                ;; Case C: No comma and no closing char -> strict error
                (t (error 'invalid-json))))))))
 
@@ -272,25 +328,21 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
   (let ((len (length json)))
     (declare (type fixnum len))
-    
+
     (reset-parser parser)
     (ignore-whitespace parser json len)
-    
+
     ;; 1. Basic Validation
     (when (>= (parser-pos parser) len)
       (error 'invalid-json))
-    
-    ;; 2. Determine Root Type
-    (let ((ch (char json (parser-pos parser))))
-      (cond
-        ((char= ch #\{) (parse-object parser json len tokens))
-        ((char= ch #\[) (parse-array  parser json len tokens))
-        (t (error 'invalid-json))))
-    
+
+    (parse-value parser json len tokens)
+
     ;; 3. Ensure no trailing garbage (strict JSON)
     (ignore-whitespace parser json len)
     (when (< (parser-pos parser) len)
       (error 'invalid-json))
-    
+
     ;; Return number of tokens consumed
     (parser-toknext parser)))
+

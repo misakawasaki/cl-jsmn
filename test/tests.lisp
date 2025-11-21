@@ -134,8 +134,8 @@
     (signals not-enough-tokens
       (parse p "[1]" tiny-tokens))))
 
-(test incomplete-json
-  (signals incomplete-json
+(test invalid-json-garbage
+  (signals invalid-json
     (with-parser (p tokens "[1, ")
       (parse p "[1, " tokens))))
 
