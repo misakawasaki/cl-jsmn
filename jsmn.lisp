@@ -1,9 +1,9 @@
 ;;;; jsmn.lisp — Faithful Common Lisp port of jsmn
 ;;;; Author: misakawasaki
 ;;;; License: MIT
-;;;; Version: 1.0.2
+;;;; Version: 1.0.0
 
-(in-package :jsmn)
+(in-package :cl-jsmn)
 
 ;; ---------------------------------------------------------------------------
 ;; Global Optimization & Types

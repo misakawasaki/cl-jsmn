@@ -1,6 +1,6 @@
 ;;;; tests.lisp
 
-(in-package :jsmn/test)
+(in-package :cl-jsmn-test)
 
 (def-suite :jsmn-tests
   :description "Tests for the JSMN port.")

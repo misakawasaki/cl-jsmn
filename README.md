@@ -1,5 +1,3 @@
-**jsmn.lisp**
-
 A faithful, high-performance Common Lisp port of [jsmn](https://github.com/zserge/jsmn), a minimalistic JSON tokenizer.
 
 ***Overview***
@@ -29,7 +27,7 @@ This approach allows you to:
 Clone this repository into your Quicklisp `local-projects` directory:
 ```Shell
 cd ~/quicklisp/local-projects
-git clone [cl-jsmn](https://github.com/misakawasaki/cl-jsmn)
+git clone https://github.com/misakawasaki/cl-jsmn
 ```
 
 Load it via Quicklisp:

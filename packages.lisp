@@ -4,7 +4,7 @@
 
 (in-package :cl-user)
 
-(defpackage :jsmn
+(defpackage :cl-jsmn
   (:use :cl)
   (:export
    ;; Main Entry Point
