@@ -32,14 +32,14 @@ git clone https://github.com/misakawasaki/cl-jsmn
 
 Load it via Quicklisp:
 ```Lisp
-(ql:quickload :jsmn)
+(ql:quickload :cl-jsmn)
 ```
 
 Quick Start
 
 Because *jsmn* is a tokenizer, it requires you to manage the memory for the tokens.
 ```Lisp
-(use-package :jsmn)
+(use-package :cl-jsmn)
 
 ;; 1. Prepare Data
 (defparameter *json* "{\"user\": \"admin\", \"id\": 1234, \"roles\": [\"read\", \"write\"]}")
@@ -139,8 +139,8 @@ Represents a JSON node.
 
 To run the test suite:
 ```Lisp
-(ql:quickload :jsmn/test)
-(asdf:test-system :jsmn)
+(ql:quickload :cl-jsmn/test)
+(asdf:test-system :cl-jsmn)
 ```
 
 ****License****
