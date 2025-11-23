@@ -82,14 +82,16 @@ Because *jsmn* is a tokenizer, it requires you to manage the memory for the toke
 ```
 Output
 ```
-Parsed 7 tokens:
-Token 0: Type=OBJECT, Range=[0, 49), Content='{"user": "admin", "id": 1234, "roles": ["read", "write"]}'
-Token 1: Type=STRING, Range=[2, 6), Content='user'
-Token 2: Type=STRING, Range=[10, 15), Content='admin'
-Token 3: Type=STRING, Range=[19, 21), Content='id'
-Token 4: Type=PRIMITIVE, Range=[23, 27), Content='1234'
-Token 5: Type=STRING, Range=[31, 36), Content='roles'
-Token 6: Type=ARRAY, Range=[38, 48), Content='["read", "write"]'
+Parsed 9 tokens:
+Token 0: Type=OBJECT, Range=[0, 57), Content='{"user": "admin", "id": 1234, "roles": ["read", "write"]}'
+Token 1: Type=STRING, Range=[1, 7), Content='"user"'
+Token 2: Type=STRING, Range=[9, 16), Content='"admin"'
+Token 3: Type=STRING, Range=[18, 22), Content='"id"'
+Token 4: Type=PRIMITIVE, Range=[24, 28), Content='1234'
+Token 5: Type=STRING, Range=[30, 37), Content='"roles"'
+Token 6: Type=ARRAY, Range=[39, 56), Content='["read", "write"]'
+Token 7: Type=STRING, Range=[40, 46), Content='"read"'
+Token 8: Type=STRING, Range=[48, 55), Content='"write"'
 ```
 
 Note: `jsmn` does not parse recursively in the traditional sense. It produces a flat array of tokens. The hierarchy is implied by the order.
