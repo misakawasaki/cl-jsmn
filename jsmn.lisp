@@ -99,28 +99,34 @@ Uses load-time-value to create a static search string for zero-allocation."
 
 (defun alloc-token (parser tokens)
   "Allocates the next available token from the vector, and registers it with the current parent (toksuper).
-Signals NOT-ENOUGH-TOKENS if the vector is full."
-  (declare (type parser parser) (type (vector token) tokens))
+Signals NOT-ENOUGH-TOKENS if the vector is full. If TOKENS is nil, simply counts the token and return nil."
+  (declare (type parser parser) (type (or null (vector token)) tokens))
   (let ((i (parser-toknext parser))
 	(super-idx (parser-toksuper parser)))
     (declare (type fixnum i super-idx))
 
-    (when (>= i (length tokens))
+    ;; Only check bounds if we are actually storing tokens
+    (when (and tokens (>= i (length tokens)))
       (error 'not-enough-tokens))
 
     ;; Link to parent: If we have a parent, increment its size.
-    (when (/= super-idx -1)
+    ;; Only possible if we have a vector to update.
+    (when (and tokens (/= super-idx -1))
       (incf (token-size (aref tokens super-idx))))
 
     (incf (parser-toknext parser))
-    (aref tokens i)))
+
+    (if tokens
+        (aref tokens i)
+	nil)))
 
 (defun fill-token (token type start end)
-  "Populates the fields of a token structure."
-  (declare (type token token) (type token-type type) (type fixnum start end))
-  (setf (token-type token) type
-        (token-start token) start
-        (token-end token) end)
+  "Populates the fields of a token structure. Does nothing if TOKEN is nil."
+  (declare (type (or null token) token) (type token-type type) (type fixnum start end))
+  (when token
+    (setf (token-type token) type
+          (token-start token) start
+          (token-end token) end))
   token)
 
 ;; ---------------------------------------------------------------------------
@@ -179,7 +185,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-primitive (parser json len tokens)
   "Parses primitives with STRICT JSON number validation."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   (let ((start (parser-pos parser))
         (token (alloc-token parser tokens)))
     (declare (type fixnum start))
@@ -248,7 +254,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-string (parser json len tokens)
   "Parses a quoted string, handling escaped characters."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   (let ((start (parser-pos parser))
         (token (alloc-token parser tokens)))
     (declare (type fixnum start))
@@ -296,7 +302,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-value (parser json len tokens)
   "Determines the type of the next value and dispatches to the correct parser."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   
   ;; Safety check: Are we at end of string?
   (when (>= (parser-pos parser) len)
@@ -311,7 +317,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-item (parser json len tokens)
   "Parses a Key:Value pair within an Object."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   
   ;; Capture the index of the NEXT token (which will be the Key)
   (let ((key-index (parser-toknext parser)))
@@ -327,7 +333,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-array (parser json len tokens)
   "Parses a JSON Array [...]."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   (let ((start (parser-pos parser))
 	(token-index (parser-toknext parser))
         (token (alloc-token parser tokens)))
@@ -340,11 +346,11 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
 (defun parse-object (parser json len tokens)
   "Parses a JSON Object {...}."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (declare (type parser parser) (type string json) (type fixnum len) (type (or null (vector token)) tokens))
   (let ((start (parser-pos parser))
 	(token-index (parser-toknext parser))
         (token (alloc-token parser tokens)))
-    (declare (type fixnum start token-start))
+    (declare (type fixnum start token-index))
     (consume-char parser json len #\{)
     (with-parent-tracking (parser token-index)
       (with-collection-parsing (parser json len #\})
@@ -362,7 +368,7 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
   ;; Public API Validation
   (check-type parser parser)
   (check-type json string)
-  (check-type tokens (vector token))
+  (check-type tokens (or null (vector token))) ;; Allow nil or vector
 
   (let ((len (length json)))
     (declare (type fixnum len))
@@ -383,4 +389,3 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 
     ;; Return number of tokens consumed
     (parser-toknext parser)))
-
