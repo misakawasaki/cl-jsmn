@@ -2,7 +2,7 @@ A faithful, high-performance Common Lisp port of [jsmn](https://github.com/zserg
 
 ***Overview***
 
-jsmn.lisp is designed to be robust, fast, and memory-efficient. Unlike most JSON parsers that construct a heavy Abstract Syntax Tree (AST) or Lisp objects (hash tables/lists) immediately, `jsmn.lisp` simply scans the JSON string and emits tokens indicating the type and location (start/end indices) of JSON nodes.
+*jsmn.lisp* is designed to be robust, fast, and memory-efficient. Unlike most JSON parsers that construct a heavy Abstract Syntax Tree (AST) or Lisp objects (hash tables/lists) immediately, `jsmn.lisp` simply scans the JSON string and emits tokens indicating the type and location (start/end indices) of JSON nodes.
 
 This approach allows you to:
 
@@ -21,6 +21,15 @@ This approach allows you to:
 3. **High Performance**: Heavily optimized with type declarations and inlining `((optimize (speed 3) (safety 1)))`.
 
 4. **No Dependencies**: Pure Common Lisp.
+
+***Optional Features***
+
+By default, tokens store their `size` (number of children) but not a pointer to their parent, to save memory.
+To enable the `parent` field (compatible with `JSMN_PARENT_LINKS`), push `:jsmn-parent-links` to your features list *before* loading the system.
+```Lisp
+(pushnew :jsmn-parent-links *features*)
+(ql:quickload :jsmn)
+```
 
 ***Installation***
 
@@ -70,7 +79,6 @@ Because *jsmn* is a tokenizer, it requires you to manage the memory for the toke
   ;; Error Handling
   (jsmn-error (e)
     (format t "Parsing failed: ~A~%" e)))
-
 ```
 Output
 ```
@@ -102,11 +110,9 @@ Parses the JSON string and fills the token vector.
     * `not-enough-tokens`: The provided vector is too small.
     * `incomplete-json`: The string ended prematurely.
 
-
 ```Lisp
 (reset-parser parser) => parser
 ```
-
 Resets the parser state (position and token index) to 0. Call this before parsing a new string with an existing parser instance.
 
 ****Structures****
@@ -134,6 +140,7 @@ Represents a JSON node.
 * `token-end`: End index in the JSON string (exclusive).
 
 * `token-size`: Number of child elements (for Objects and Arrays).
+* `token-parent`: (*Optional*) Index of the parent token. Available only if `:jsmn-parent-links` is enabled.
 
 ****Testing****
 

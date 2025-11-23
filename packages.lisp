@@ -28,6 +28,10 @@
    #:token-end
    #:token-size
 
+   ;; Optional Parent Link (Compile-time feature)
+   #+jsmn-parent-links
+   #:token-parent
+
    ;; Conditions (Errors)
    #:jsmn-error
    #:invalid-json

@@ -42,10 +42,13 @@
 (defstruct token
   "Represents a single JSON node.
 START and END are indices into the JSON string representing the range [start, end)."
-  (type  :undefined :type token-type)
-  (start -1         :type fixnum)
-  (end   -1         :type fixnum)
-  (size  0          :type fixnum))
+  (type   :undefined :type token-type)
+  (start  -1         :type fixnum)
+  (end    -1         :type fixnum)
+  (size   0          :type fixnum)
+  ;; Optinal Parent Link (Enable via :jsmn-parent-links in *features*)
+  #+jsmn-parent-links
+  (parent -1         :type fixnum))
 
 (defstruct parser
   "Holds the state of the JSON parser."
@@ -123,6 +126,10 @@ Signals NOT-ENOUGH-TOKENS if the vector is full. If TOKENS is nil, simply counts
 		(token-end tok) -1
 		(token-size tok) 0
 		(token-type tok) :undefined)
+
+	  ;; Conditionally set parent if feature is enabled
+	  #+jsmn-parent-links
+	  (setf (token-parent tok) super-idx)
 	  tok)
 	nil)))
 

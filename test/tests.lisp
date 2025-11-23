@@ -252,3 +252,29 @@
     ;; Nested: {"a": [1, 2]} -> Obj + Key + Arr + 1 + 2 = 5 tokens
     (reset-parser p)
     (is (= 5 (parse p "{\"a\": [1, 2]}" nil)))))
+;; ---------------------------------------------------------------------------
+;; Optional Feature: Parent Links
+;; ---------------------------------------------------------------------------
+
+;; Only compile this test if the feature is enabled
+#+jsmn-parent-links
+(test check-parent-links
+  "Verify that parent links are correctly set when :jsmn-parent-links is enabled."
+  (with-parser (p tokens "{\"a\": [1]}")
+    ;; Tokens:
+    ;; 0: Object {"a": [1]} (Parent: -1)
+    ;; 1: String "a"        (Parent: 0) -> Key is child of Object
+    ;; 2: Array [1]         (Parent: 1) -> Value is child of Key (v1.3.0 logic)
+    ;; 3: Primitive 1       (Parent: 2) -> Element is child of Array
+    
+    (is (= 4 (parse p "{\"a\": [1]}" tokens)))
+    
+    (let ((obj (get-token tokens 0))
+          (key (get-token tokens 1))
+          (arr (get-token tokens 2))
+          (val (get-token tokens 3)))
+          
+      (is (= -1 (token-parent obj)))  ;; Root has no parent
+      (is (= 0  (token-parent key)))  ;; Key -> Object
+      (is (= 1  (token-parent arr)))  ;; Array -> Key
+      (is (= 2  (token-parent val)))))) ;; Primitive -> Array
