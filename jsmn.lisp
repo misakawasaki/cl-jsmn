@@ -117,7 +117,13 @@ Signals NOT-ENOUGH-TOKENS if the vector is full. If TOKENS is nil, simply counts
     (incf (parser-toknext parser))
 
     (if tokens
-        (aref tokens i)
+        (let ((tok (aref tokens i)))
+	  ;; Initialize/Reset the new token (Essential for buffer reuse)
+          (setf (token-start tok) -1
+		(token-end tok) -1
+		(token-size tok) 0
+		(token-type tok) :undefined)
+	  tok)
 	nil)))
 
 (defun fill-token (token type start end)
