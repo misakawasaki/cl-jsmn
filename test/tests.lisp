@@ -230,3 +230,25 @@
   (signals invalid-json
     (with-parser (p tokens "{\"a\": 1} garbage")
       (parse p "{\"a\": 1} garbage" tokens))))
+;; ---------------------------------------------------------------------------
+;; Counting Mode (No Allocation)
+;; ---------------------------------------------------------------------------
+
+(test counting-mode
+  "Ensure parser correctly counts tokens when token buffer is NIL."
+  (let ((p (make-parser)))
+    ;; Primitive: true -> 1 token
+    (reset-parser p)
+    (is (= 1 (parse p "true" nil)))
+    
+    ;; Array: [1, 2] -> Array + 1 + 2 = 3 tokens
+    (reset-parser p)
+    (is (= 3 (parse p "[1, 2]" nil)))
+    
+    ;; Object: {"a": 1} -> Object + Key + Value = 3 tokens
+    (reset-parser p)
+    (is (= 3 (parse p "{\"a\": 1}" nil)))
+
+    ;; Nested: {"a": [1, 2]} -> Obj + Key + Arr + 1 + 2 = 5 tokens
+    (reset-parser p)
+    (is (= 5 (parse p "{\"a\": [1, 2]}" nil)))))
