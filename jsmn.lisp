@@ -6,7 +6,7 @@
 (in-package :cl-jsmn)
 
 ;; ---------------------------------------------------------------------------
-;; Global Optimization & Types
+;; Global Optimization
 ;; ---------------------------------------------------------------------------
 
 ;; Optimize for execution speed, but keep safety at 1 to ensure 
@@ -49,8 +49,8 @@ START and END are indices into the JSON string representing the range [start, en
 
 (defstruct parser
   "Holds the state of the JSON parser."
-  (pos      0 :type fixnum) ;; Current offset in the JSON string
-  (toknext  0 :type fixnum) ;; Next available token index
+  (pos      0 :type fixnum)   ;; Current offset in the JSON string
+  (toknext  0 :type fixnum)   ;; Next available token index
   (toksuper -1 :type fixnum)) ;; Index of the current parent token
 
 (defun reset-parser (parser)
@@ -98,13 +98,20 @@ Uses load-time-value to create a static search string for zero-allocation."
   (incf (parser-pos parser)))
 
 (defun alloc-token (parser tokens)
-  "Allocates the next available token from the vector.
+  "Allocates the next available token from the vector, and registers it with the current parent (toksuper).
 Signals NOT-ENOUGH-TOKENS if the vector is full."
   (declare (type parser parser) (type (vector token) tokens))
-  (let ((i (parser-toknext parser)))
-    (declare (type fixnum i))
+  (let ((i (parser-toknext parser))
+	(super-idx (parser-toksuper parser)))
+    (declare (type fixnum i super-idx))
+
     (when (>= i (length tokens))
       (error 'not-enough-tokens))
+
+    ;; Link to parent: If we have a parent, increment its size.
+    (when (/= super-idx -1)
+      (incf (token-size (aref tokens super-idx))))
+
     (incf (parser-toknext parser))
     (aref tokens i)))
 
@@ -117,144 +124,23 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
   token)
 
 ;; ---------------------------------------------------------------------------
-;; Parsing Logic
+;; Macros
 ;; ---------------------------------------------------------------------------
 
-(defun parse-primitive (parser json len tokens)
-  "Parses primitives with STRICT JSON number validation."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
-  (let ((start (parser-pos parser))
-        (token (alloc-token parser tokens)))
-    (declare (type fixnum start))
+(defmacro with-json-accessors ((parser json) &body body)
+  "Binds POS to the parser position and CH to the current character."
+  `(symbol-macrolet ((pos (parser-pos ,parser))
+		     (ch  (char ,json (parser-pos ,parser))))
+     ,@body))
 
-    ;; 1. Check Keywords first (same as before)
-    (cond
-      ((match-string-p json len (parser-pos parser) "true")
-       (incf (parser-pos parser) 4))
-      ((match-string-p json len (parser-pos parser) "false")
-       (incf (parser-pos parser) 5))
-      ((match-string-p json len (parser-pos parser) "null")
-       (incf (parser-pos parser) 4))
-
-      ;; 2. Strict Number Parsing
-      (t
-       ;; A. Optional Minus (Start)
-       (when (and (< (parser-pos parser) len)
-                  (char= (char json (parser-pos parser)) #\-))
-         (incf (parser-pos parser)))
-
-       ;; B. Integer Part
-       (if (>= (parser-pos parser) len) (error 'invalid-json)) ;; Empty after minus?
-       (let ((ch (char json (parser-pos parser))))
-         (cond
-           ;; Leading Zero (Allowed, but next char cannot be a digit)
-           ((char= ch #\0)
-            (incf (parser-pos parser))
-            ;; Strict check: 01 is invalid. 0.1 is valid. 0e1 is valid.
-            (when (and (< (parser-pos parser) len)
-                       (digit-char-p (char json (parser-pos parser))))
-              (error 'invalid-json)))
-
-           ;; Non-Zero Digit (1-9)
-           ((digit-char-p ch)
-            (loop while (and (< (parser-pos parser) len)
-                             (digit-char-p (char json (parser-pos parser))))
-                  do (incf (parser-pos parser))))
-
-           ;; Anything else at start (e.g. "+", ".", "e") -> Error
-           (t (error 'invalid-json))))
-
-       ;; C. Fraction Part (Optional)
-       (when (and (< (parser-pos parser) len)
-                  (char= (char json (parser-pos parser)) #\.))
-         (incf (parser-pos parser)) ;; Consume dot
-
-         ;; Must have at least one digit after dot
-         (when (or (>= (parser-pos parser) len)
-                   (not (digit-char-p (char json (parser-pos parser)))))
-           (error 'invalid-json))
-
-         ;; Consume remaining digits
-         (loop while (and (< (parser-pos parser) len)
-                          (digit-char-p (char json (parser-pos parser))))
-               do (incf (parser-pos parser))))
-
-       ;; D. Exponent Part (Optional)
-       (when (and (< (parser-pos parser) len)
-                  (or (char= (char json (parser-pos parser)) #\e)
-                      (char= (char json (parser-pos parser)) #\E)))
-         (incf (parser-pos parser)) ;; Consume E
-
-         ;; Optional Sign (+ or -) allowed ONLY here
-         (when (and (< (parser-pos parser) len)
-                    (or (char= (char json (parser-pos parser)) #\+)
-                        (char= (char json (parser-pos parser)) #\-)))
-           (incf (parser-pos parser)))
-
-         ;; Must have at least one digit after E (and optional sign)
-         (when (or (>= (parser-pos parser) len)
-                   (not (digit-char-p (char json (parser-pos parser)))))
-           (error 'invalid-json))
-
-         ;; Consume remaining digits
-         (loop while (and (< (parser-pos parser) len)
-                          (digit-char-p (char json (parser-pos parser))))
-               do (incf (parser-pos parser))))))
-
-    (fill-token token :primitive start (parser-pos parser))))
-
-(defun parse-string (parser json len tokens)
-  "Parses a quoted string, handling escaped characters."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
-  (let ((start (parser-pos parser))
-        (token (alloc-token parser tokens)))
-    (declare (type fixnum start))
-    
-    (consume-char parser json len #\")
-    
-    (loop
-      (when (>= (parser-pos parser) len)
-        (error 'incomplete-json))
-      (let ((ch (char json (parser-pos parser))))
-        (cond 
-          ;; Case 1: Escape Sequence (e.g. \") -> Skip backslash AND next char
-          ((char= ch #\\)
-           (incf (parser-pos parser) 2)) 
-          
-          ;; Case 2: Closing Quote -> Done
-          ((char= ch #\")
-           (incf (parser-pos parser))
-           (return))
-          
-          ;; Case 3: Regular character -> Advance
-          (t 
-           (incf (parser-pos parser))))))
-           
-    (fill-token token :string start (parser-pos parser))))
-
-(defun parse-value (parser json len tokens)
-  "Determines the type of the next value and dispatches to the correct parser."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
-  
-  ;; Safety check: Are we at end of string?
-  (when (>= (parser-pos parser) len)
-    (error 'incomplete-json))
-    
-  (let ((ch (char json (parser-pos parser))))
-    (cond
-      ((char= ch #\") (parse-string parser json len tokens))
-      ((char= ch #\{) (parse-object parser json len tokens))
-      ((char= ch #\[) (parse-array parser json len tokens))
-      (t              (parse-primitive parser json len tokens)))))
-
-(defun parse-item (parser json len tokens)
-  "Parses a Key:Value pair within an Object."
-  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
-  (parse-string parser json len tokens)   ;; Key
-  (ignore-whitespace parser json len)
-  (consume-char parser json len #\:)      ;; Separator
-  (ignore-whitespace parser json len)
-  (parse-value parser json len tokens))   ;; Value
+(defmacro with-parent-tracking ((parser new-super-index) &body body)
+  "Save current toksuper, sets it to the NEW-SUPER-INDEX, executes BODY, then restores toksuper."
+  (let ((old-super (gensym "OLD-SUPER")))
+    `(let ((,old-super (parser-toksuper ,parser)))
+       (setf (parser-toksuper ,parser) ,new-super-index)
+       (multiple-value-prog1
+	   (progn ,@body)
+         (setf (parser-toksuper ,parser) ,old-super)))))
 
 (defmacro with-collection-parsing ((parser json len end-char) &body body)
   "Macro to handle the loop logic for Arrays and Objects.
@@ -293,24 +179,153 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
                ;; Case C: No comma and no closing char -> strict error
                (t (error 'invalid-json))))))))
 
+;; ---------------------------------------------------------------------------
+;; Parsing Logic
+;; ---------------------------------------------------------------------------
+
+(defun parse-primitive (parser json len tokens)
+  "Parses primitives with STRICT JSON number validation."
+  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (let ((start (parser-pos parser))
+        (token (alloc-token parser tokens)))
+    (declare (type fixnum start))
+
+    (with-json-accessors (parser json)
+      ;; 1. Check Keywords first (same as before)
+      (cond
+        ((match-string-p json len pos "true")  (incf pos 4))
+        ((match-string-p json len pos "false") (incf pos 5))
+        ((match-string-p json len pos "null")  (incf pos 4))
+
+        ;; 2. Strict Number Parsing
+        (t
+         ;; A. Optional Minus (Start)
+         (when (and (< pos len) (char= ch #\-))
+           (incf pos))
+
+         ;; B. Integer Part
+         (if (>= pos len) (error 'invalid-json)) ;; Empty after minus?
+     
+         (cond
+           ;; Leading Zero (Allowed, but next char cannot be a digit)
+           ((char= ch #\0)
+            (incf pos)
+            ;; Strict check: 01 is invalid. 0.1 is valid. 0e1 is valid.
+            (when (and (< pos len) (digit-char-p ch))
+              (error 'invalid-json)))
+
+           ;; Non-Zero Digit (1-9)
+           ((digit-char-p ch)
+            (loop while (and (< pos len) (digit-char-p ch))
+                  do (incf pos)))
+
+           ;; Anything else at start (e.g. "+", ".", "e") -> Error
+           (t (error 'invalid-json)))
+
+         ;; C. Fraction Part (Optional)
+         (when (and (< pos len) (char= ch #\.))
+           (incf pos) ;; Consume dot
+
+         ;; Must have at least one digit after dot
+         (when (or (>= pos len) (not (digit-char-p ch)))
+           (error 'invalid-json))
+
+         ;; Consume remaining digits
+         (loop while (and (< pos len) (digit-char-p ch))
+               do (incf pos)))
+
+         ;; D. Exponent Part (Optional)
+         (when (and (< pos len) (or (char= ch #\e) (char= ch #\E)))
+           (incf pos) ;; Consume E
+
+           ;; Optional Sign (+ or -) allowed ONLY here
+           (when (and (< pos len) (or (char= ch #\+) (char= ch #\-)))
+             (incf pos))
+
+           ;; Must have at least one digit after E (and optional sign)
+           (when (or (>= pos len) (not (digit-char-p ch)))
+             (error 'invalid-json))
+
+           ;; Consume remaining digits
+           (loop while (and (< pos len) (digit-char-p ch))
+                 do (incf pos))))))
+
+    (fill-token token :primitive start (parser-pos parser))))
+
+(defun parse-string (parser json len tokens)
+  "Parses a quoted string, handling escaped characters."
+  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (let ((start (parser-pos parser))
+        (token (alloc-token parser tokens)))
+    (declare (type fixnum start))
+    
+    (consume-char parser json len #\")
+   
+    (with-json-accessors (parser json)
+      (loop
+        (when (>= pos len)
+          (error 'incomplete-json))
+  
+        (cond 
+          ;; Case 1: Escape Sequence (e.g. \") -> Skip backslash AND next char
+          ((char= ch #\\) (incf pos 2)) 
+          
+          ;; Case 2: Closing Quote -> Done
+          ((char= ch #\") (incf pos) (return))
+          
+          ;; Case 3: Regular character -> Advance
+          (t (incf pos)))))
+           
+    (fill-token token :string start (parser-pos parser))))
+
+(defun parse-value (parser json len tokens)
+  "Determines the type of the next value and dispatches to the correct parser."
+  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  
+  ;; Safety check: Are we at end of string?
+  (when (>= (parser-pos parser) len)
+    (error 'incomplete-json))
+  
+  (with-json-accessors (parser json)
+    (cond
+      ((char= ch #\") (parse-string parser json len tokens))
+      ((char= ch #\{) (parse-object parser json len tokens))
+      ((char= ch #\[) (parse-array parser json len tokens))
+      (t              (parse-primitive parser json len tokens)))))
+
+(defun parse-item (parser json len tokens)
+  "Parses a Key:Value pair within an Object."
+  (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
+  (parse-string parser json len tokens)   ;; Key
+  (ignore-whitespace parser json len)
+  (consume-char parser json len #\:)      ;; Separator
+  (ignore-whitespace parser json len)
+  (parse-value parser json len tokens))   ;; Value
+
 (defun parse-array (parser json len tokens)
   "Parses a JSON Array [...]."
   (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
   (let ((start (parser-pos parser))
+	(token-index (parser-toknext parser))
         (token (alloc-token parser tokens)))
+    (declare (type fixnum start token-index))
     (consume-char parser json len #\[)
-    (with-collection-parsing (parser json len #\])
-      (parse-value parser json len tokens))
+    (with-parent-tracking (parser token-index)
+      (with-collection-parsing (parser json len #\])
+        (parse-value parser json len tokens)))
     (fill-token token :array start (parser-pos parser))))
 
 (defun parse-object (parser json len tokens)
   "Parses a JSON Object {...}."
   (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
   (let ((start (parser-pos parser))
+	(token-index (parser-toknext parser))
         (token (alloc-token parser tokens)))
+    (declare (type fixnum start token-start))
     (consume-char parser json len #\{)
-    (with-collection-parsing (parser json len #\})
-      (parse-item parser json len tokens))
+    (with-parent-tracking (parser token-index)
+      (with-collection-parsing (parser json len #\})
+        (parse-item parser json len tokens)))
     (fill-token token :object start (parser-pos parser))))
 
 ;; ---------------------------------------------------------------------------
