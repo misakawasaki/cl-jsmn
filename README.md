@@ -141,7 +141,7 @@ Represents a JSON node.
 
 * `token-end`: End index in the JSON string (exclusive).
 
-* `token-size`: Number of child elements (for Objects and Arrays).
+* `token-size`: Number of child elements (for Objects and Arrays). For string tokens that serve as object keys, `size` is 1, indicating one associated value follows
 * `token-parent`: (*Optional*) Index of the parent token. Available only if `:jsmn-parent-links` is enabled.
 
 ****Testing****
