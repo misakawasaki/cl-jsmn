@@ -28,10 +28,10 @@
   (aref tokens index))
 
 ;; ---------------------------------------------------------------------------
-;; Primitives
+;; Primitives & Strict Numbers
 ;; ---------------------------------------------------------------------------
 
-(test parse-primitives
+(test parse-primitives-basic
   (with-parser (p tokens "true")
     (is (= 1 (parser-toknext p)))
     (let ((tok (get-token tokens 0)))
@@ -43,31 +43,87 @@
     (is (eq :primitive (token-type (get-token tokens 0)))))
 
   (with-parser (p tokens "null")
-    (is (eq :primitive (token-type (get-token tokens 0)))))
+    (is (eq :primitive (token-type (get-token tokens 0))))))
 
-  (with-parser (p tokens "123.45")
-    (is (eq :primitive (token-type (get-token tokens 0))))
-    (is (= 6 (token-end (get-token tokens 0))))))
+(test strict-numbers-valid
+  "Test strict JSON number formatting (RFC 8259)."
+  ;; Integers
+  (with-parser (p tokens "0") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "-0") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "123") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "-123") (is (= 1 (parser-toknext p))))
+  
+  ;; Floats
+  (with-parser (p tokens "0.1") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "-0.123") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "123.456") (is (= 1 (parser-toknext p))))
+  
+  ;; Exponents
+  (with-parser (p tokens "1e5") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "1E+5") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "1e-5") (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "0.5e10") (is (= 1 (parser-toknext p)))))
+
+(test strict-numbers-invalid
+  "Ensure invalid number formats signal invalid-json."
+  ;; Leading zeros
+  (signals invalid-json (with-parser (p tokens "01") (parse p "01" tokens)))
+  (signals invalid-json (with-parser (p tokens "-01") (parse p "-01" tokens)))
+  
+  ;; Leading/Trailing dots
+  (signals invalid-json (with-parser (p tokens ".1") (parse p ".1" tokens)))
+  (signals invalid-json (with-parser (p tokens "1.") (parse p "1." tokens)))
+  
+  ;; Leading Plus (Not allowed in JSON)
+  (signals invalid-json (with-parser (p tokens "+1") (parse p "+1" tokens)))
+  
+  ;; Malformed Exponents
+  (signals invalid-json (with-parser (p tokens "1e") (parse p "1e" tokens)))
+  (signals invalid-json (with-parser (p tokens "1e+") (parse p "1e+" tokens)))
+  (signals invalid-json (with-parser (p tokens "1.e1") (parse p "1.e1" tokens))))
 
 ;; ---------------------------------------------------------------------------
-;; Strings
+;; Strict Strings & Escapes
 ;; ---------------------------------------------------------------------------
 
-(test parse-strings
+(test strict-strings-valid
   (with-parser (p tokens "\"Hello World\"")
-    (is (= 1 (parser-toknext p)))
-    (let ((tok (get-token tokens 0)))
-      (is (eq :string (token-type tok)))
-      (is (= 0 (token-start tok)))
-      (is (= 13 (token-end tok))))) ;; Includes quotes in JSMN style
+    (is (= 1 (parser-toknext p))))
+  
+  ;; Standard Escapes
+  (with-parser (p tokens "\"Line\\nFeed\"")
+    (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "\"Quote\\\"Backslash\\\\\"")
+    (is (= 1 (parser-toknext p))))
+  
+  ;; Unicode Escapes
+  (with-parser (p tokens "\"Unicode \\u0041\"") ;; \u0041 is 'A'
+    (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "\"Unicode \\u1234\"") 
+    (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "\"Unicode \\uABCF\"") 
+    (is (= 1 (parser-toknext p))))
+  (with-parser (p tokens "\"Unicode \\uabcf\"") 
+    (is (= 1 (parser-toknext p)))))
 
-  ;; Test Escaped Quotes: "foo\"bar"
-  (with-parser (p tokens "\"foo\\\"bar\"")
-    (is (= 1 (parser-toknext p)))
-    (let ((tok (get-token tokens 0)))
-      (is (eq :string (token-type tok)))
-      ;; Start quote (index 0) to End quote (index 9) -> length 10
-      (is (= 10 (token-end tok)))))) 
+(test strict-strings-invalid
+  ;; Unknown escape char
+  (signals invalid-json 
+    (with-parser (p tokens "\"Bad escape \\a\"") 
+      (parse p "\"Bad escape \\a\"" tokens)))
+  
+  ;; Malformed Unicode
+  (signals invalid-json 
+    (with-parser (p tokens "\"Bad hex \\uZZZZ\"") 
+      (parse p "\"Bad hex \\uZZZZ\"" tokens)))
+  
+  (signals invalid-json 
+    (with-parser (p tokens "\"Short hex \\u123\"") 
+      (parse p "\"Short hex \\u123\"" tokens)))
+  
+  (signals invalid-json
+    (with-parser (p tokens "\"Cut off \\u12\"") 
+      (parse p "\"Cut off \\u12\"" tokens))))
 
 ;; ---------------------------------------------------------------------------
 ;; Arrays & Strict Commas
@@ -77,13 +133,9 @@
   (with-parser (p tokens "[1, 2, 3]")
     ;; 1 Array + 3 Primitives = 4 Tokens
     (is (= 4 (parser-toknext p)))
-    (is (eq :array (token-type (get-token tokens 0))))
-    (is (eq :primitive (token-type (get-token tokens 1))))))
-
-(test parse-array-empty
-  (with-parser (p tokens "[]")
-    (is (= 1 (parser-toknext p)))
-    (is (eq :array (token-type (get-token tokens 0))))))
+    (let ((arr (get-token tokens 0)))
+      (is (eq :array (token-type arr)))
+      (is (= 3 (token-size arr)))))) ;; Array Size = Number of Elements
 
 (test parse-array-strict-comma
   "Ensure that missing commas raise an error"
@@ -92,13 +144,13 @@
       (parse p "[1 2]" tokens))))
 
 (test parse-array-trailing-comma
-  "JSMN usually allows trailing commas? Our strict port does NOT."
+  "Ensure trailing commas are rejected (Strict JSON)."
   (signals invalid-json
     (with-parser (p tokens "[1,]")
       (parse p "[1,]" tokens))))
 
 ;; ---------------------------------------------------------------------------
-;; Objects
+;; Objects, Size & Hierarchy (v1.3.0 Logic)
 ;; ---------------------------------------------------------------------------
 
 (test parse-object-simple
@@ -106,36 +158,71 @@
   (with-parser (p tokens "{\"key\": 123}")
     ;; 1 Object + 1 String (Key) + 1 Primitive (Value) = 3 Tokens
     (is (= 3 (parser-toknext p)))
-    (is (eq :object (token-type (get-token tokens 0))))
-    (is (eq :string (token-type (get-token tokens 1))))
-    (is (eq :primitive (token-type (get-token tokens 2))))))
+    
+    ;; Token 0: Object
+    (let ((obj (get-token tokens 0)))
+      (is (eq :object (token-type obj)))
+      ;; v1.3.0 Change: Size = Number of KEYS (Pairs), not total children
+      (is (= 1 (token-size obj))))
+    
+    ;; Token 1: Key "key"
+    (let ((key (get-token tokens 1)))
+      (is (eq :string (token-type key)))
+      ;; v1.3.0 Change: Key is Parent of Value, so Size = 1
+      (is (= 1 (token-size key))))
+    
+    ;; Token 2: Value 123
+    (let ((val (get-token tokens 2)))
+      (is (eq :primitive (token-type val)))
+      (is (= 0 (token-size val))))))
+
+(test parse-object-multiple
+  ;; {"a": 1, "b": 2}
+  (with-parser (p tokens "{\"a\": 1, \"b\": 2}")
+    ;; Obj + KeyA + Val1 + KeyB + Val2 = 5 Tokens
+    (is (= 5 (parser-toknext p)))
+    
+    (let ((obj (get-token tokens 0)))
+      (is (= 2 (token-size obj)))) ;; 2 Pairs
+      
+    (let ((key-a (get-token tokens 1)))
+      (is (= 1 (token-size key-a)))) ;; Key "a" has 1 child
+      
+    (let ((key-b (get-token tokens 3)))
+      (is (= 1 (token-size key-b)))))) ;; Key "b" has 1 child
 
 (test parse-object-nested
-  ;; {"a": [1]}
-  (with-parser (p tokens "{\"a\": [1]}")
-    ;; Obj(1) + Str(1) + Arr(1) + Prim(1) = 4 Tokens
-    (is (= 4 (parser-toknext p)))
+  ;; {"a": [1, 2]}
+  (with-parser (p tokens "{\"a\": [1, 2]}")
+    ;; Obj(1) + Key(1) + Arr(1) + Prim(1) + Prim(1) = 5 Tokens
+    (is (= 5 (parser-toknext p)))
+    
+    ;; Object
     (is (eq :object (token-type (get-token tokens 0))))
-    (is (eq :string (token-type (get-token tokens 1)))) ;; Key "a"
-    (is (eq :array  (token-type (get-token tokens 2)))) ;; Value [1]
-    (is (eq :primitive (token-type (get-token tokens 3)))))) ;; Element 1
+    (is (= 1 (token-size (get-token tokens 0)))) ;; 1 Pair
+    
+    ;; Key "a"
+    (is (eq :string (token-type (get-token tokens 1))))
+    (is (= 1 (token-size (get-token tokens 1)))) ;; Key contains Array
+    
+    ;; Array [1, 2]
+    (let ((arr (get-token tokens 2)))
+      (is (eq :array (token-type arr)))
+      (is (= 2 (token-size arr)))))) ;; Array contains 2 items
 
 ;; ---------------------------------------------------------------------------
 ;; Error Handling
 ;; ---------------------------------------------------------------------------
 
 (test not-enough-tokens
-  ;; Provide a tiny array of only 1 token
   (let ((p (make-parser))
         (tiny-tokens (make-array 1 :element-type 'token)))
     (setf (aref tiny-tokens 0) (make-token))
-    
-    ;; Try to parse "[1]" which needs 2 tokens (Array + Primitive)
     (signals not-enough-tokens
       (parse p "[1]" tiny-tokens))))
 
-(test invalid-json-garbage
-  (signals invalid-json
+(test incomplete-json
+  (signals incomplete-json
     (with-parser (p tokens "[1, ")
       (parse p "[1, " tokens))))
 
