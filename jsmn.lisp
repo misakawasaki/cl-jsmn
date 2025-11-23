@@ -145,13 +145,12 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 (defmacro with-collection-parsing ((parser json len end-char) &body body)
   "Macro to handle the loop logic for Arrays and Objects.
    Enforces strict comma separation between items."
-  `(progn
+  `(with-json-accessors (,parser ,json)
      (ignore-whitespace ,parser ,json ,len)
 
      ;; 1. Check for Empty Collection "[]" or "{}"
-     (if (and (< (parser-pos ,parser) ,len)
-              (char= (char ,json (parser-pos ,parser)) ,end-char))
-         (incf (parser-pos ,parser)) ;; Consumed closing char
+     (if (and (< pos ,len) (char= ch ,end-char))
+         (incf pos) ;; Consumed closing char
 
          ;; 2. Non-Empty: Loop Items
          (loop
@@ -161,23 +160,18 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
            (ignore-whitespace ,parser ,json ,len)
 
            ;; Safety check inside loop
-           (when (>= (parser-pos ,parser) ,len)
+           (when (>= pos ,len)
              (error 'incomplete-json))
+  
+	   (cond
+             ;; Case A: Found Closing Char -> Done
+             ((char= ch ,end-char) (incf pos) (return))
 
-           (let ((ch (char ,json (parser-pos ,parser))))
-             (cond
-               ;; Case A: Found Closing Char -> Done
-               ((char= ch ,end-char)
-                (incf (parser-pos ,parser))
-                (return))
+             ;; Case B: Found Comma -> Continue to next item
+             ((char= ch #\,) (incf pos) (ignore-whitespace ,parser ,json, len))
 
-               ;; Case B: Found Comma -> Continue to next item
-               ((char= ch #\,)
-                (incf (parser-pos ,parser))
-                (ignore-whitespace ,parser ,json, len))
-
-               ;; Case C: No comma and no closing char -> strict error
-               (t (error 'invalid-json))))))))
+             ;; Case C: No comma and no closing char -> strict error
+             (t (error 'invalid-json)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Parsing Logic
