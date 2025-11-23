@@ -262,7 +262,29 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
   
         (cond 
           ;; Case 1: Escape Sequence (e.g. \") -> Skip backslash AND next char
-          ((char= ch #\\) (incf pos 2)) 
+          ((char= ch #\\) 
+	   (incf pos)  ;; Skip backslash
+	   (when (>= pos len) (error 'incomplete-json))
+	   
+	   ;; Strict validation of the charactor following backslash
+	   (case ch
+	     ;; Standard JSON escapes
+	     ((#\" #\/ #\\ #\b #\f #\r #\n #\t)
+	      (incf pos))
+
+	     ;; Unicode escape \uXXXX
+	     (#\u
+	      (incf pos) ;; Skip 'u'
+	      ;; Loop 4 times for 4 hex digits
+	      (dotimes (i 4)
+		(when (>= pos len) (error 'incomplete-json))
+		;; Check if current char is hex digit (0-9, a-f, A-F)
+		(unless (digit-char-p ch 16)
+		  (error 'invalid-json))
+		(incf pos)))
+
+             ;; Invalid escape sequence (e.g. \a, \z)
+	     (t (error 'invalid-json)))) 
           
           ;; Case 2: Closing Quote -> Done
           ((char= ch #\") (incf pos) (return))
