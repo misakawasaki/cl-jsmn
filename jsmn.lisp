@@ -312,11 +312,18 @@ Signals NOT-ENOUGH-TOKENS if the vector is full."
 (defun parse-item (parser json len tokens)
   "Parses a Key:Value pair within an Object."
   (declare (type parser parser) (type string json) (type fixnum len) (type (vector token) tokens))
-  (parse-string parser json len tokens)   ;; Key
-  (ignore-whitespace parser json len)
-  (consume-char parser json len #\:)      ;; Separator
-  (ignore-whitespace parser json len)
-  (parse-value parser json len tokens))   ;; Value
+  
+  ;; Capture the index of the NEXT token (which will be the Key)
+  (let ((key-index (parser-toknext parser)))
+    ;; 1. Parse Key (Parent = Object)
+    (parse-string parser json len tokens)
+    (ignore-whitespace parser json len)
+    (consume-char parser json len #\:)      ;; Separator
+    (ignore-whitespace parser json len)
+
+    ;; 2. Parse Value (Parent = Key)
+    (with-parent-tracking (parser key-index)
+      (parse-value parser json len tokens))))
 
 (defun parse-array (parser json len tokens)
   "Parses a JSON Array [...]."
